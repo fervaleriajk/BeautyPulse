@@ -93,7 +93,6 @@ PLATAFORMAS = ["TikTok", "Instagram", "Pinterest", "YouTube", "Facebook", "Otras
 CATEGORIAS = ["Maquillaje", "Skincare", "Cabello", "Uñas", "Accesorios", "Otros"]
 ESTADOS = ["En tendencia", "En observación", "Archivada"]
 COLORES = ["#c58d9c", "#e2b3b6", "#e8c7a5", "#a9bdbc", "#a698c2", "#795b76"]
-
 # =====================================================
 # 2. ACCESO Y CONEXIÓN CON MONGODB ATLAS
 # =====================================================
@@ -135,6 +134,38 @@ except PyMongoError:
     st.stop()
 
 
+    if archivo is None:
+        return None
+    if archivo.size > 5 * 1024 * 1024:
+        raise ValueError("La imagen debe pesar menos de 5 MB.")
+    try:
+        with Image.open(archivo) as original:
+            imagen = original.convert("RGB")
+            imagen.thumbnail((800, 800))
+            salida = io.BytesIO()
+            imagen.save(salida, format="JPEG", quality=78, optimize=True)
+    except (UnidentifiedImageError, OSError) as exc:
+        raise ValueError("El archivo no es una imagen válida.") from exc
+    return base64.b64encode(salida.getvalue()).decode("ascii")
+
+
+def resolver_imagen(doc):
+    # Preferimos la imagen subida; si no existe, usamos imagen_url.
+    if doc.get("imagen_base64"):
+        try:
+            return base64.b64decode(doc["imagen_base64"], validate=True)
+        except (ValueError, binascii.Error):
+            pass
+    url = str(doc.get("imagen_url") or "").strip()
+    return url if url and url_valida(url) else None
+
+
+def cambiar_pagina(pagina):
+    # Callback del botón: se ejecuta antes de que Streamlit cree el menú radio.
+    st.session_state["menu"] = pagina
+
+
+def tarjeta_producto(doc):
     """Una sola acción visible: Ver detalles por hover/foco."""
     codigo = str(doc.get("codigo", ""))
     producto = str(doc.get("producto", "Sin nombre"))
@@ -233,34 +264,6 @@ def tabla_productos(documentos):
     filas = [{etiqueta: d.get(clave, "") for clave, etiqueta in columnas.items()} for d in documentos]
     st.dataframe(pd.DataFrame(filas, columns=list(columnas.values())),
                  hide_index=True, use_container_width=True)
-# =====================================================
-# 4. DASHBOARD: CINCO GRÁFICOS + TENDENCIAS COMPACTAS
-# =====================================================
-def estilo_figura(fig, alto=300, es_dona=False):
-    fig.update_layout(
-        height=alto,
-        margin=dict(l=8, r=8, t=10, b=12),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#765862", family="Arial", size=11),
-        legend=dict(orientation="h", x=0, y=-0.17),
-    )
-    if not es_dona:
-        fig.update_yaxes(gridcolor="#f1e1e5")
-    return fig
-
-
-def dashboard_graficos(documentos):
-    """Cuadrícula 2x3: 5 gráficos y una lista compacta de tendencias."""
-    if not documentos:
-        st.info("Registra productos para visualizar gráficos y tendencias.")
-        return
-
-    df = pd.DataFrame([{
-        "codigo": str(d.get("codigo") or ""),
-        "producto": str(d.get("producto") or "Sin nombre"),
-        "plataforma": str(d.get("plataforma") or "Otras"),
-        "categoria": str(d.get("categoria") or "Otros"),
         "estado": str(d.get("estado") or "Sin estado"),
         "visualizaciones": int(d.get("visualizaciones") or 0),
         "likes": int(d.get("likes") or 0),
@@ -377,6 +380,8 @@ if menu == "Dashboard":
     st.header("📊 Dashboard de tendencias BeautyPulse")
     docs = obtener_registros()
     dashboard_graficos(docs)
+
+
 # =====================================================
 # 7. CREATE: REGISTRAR CON CÓDIGO AUTOMÁTICO
 # =====================================================
@@ -460,7 +465,6 @@ elif menu == "Registrar":
                 st.error(str(exc))
             except PyMongoError:
                 st.error("No se pudo guardar el producto en MongoDB Atlas.")
-
 # =====================================================
 # 8. READ: CONSULTAR Y FILTRAR
 # =====================================================
@@ -494,6 +498,7 @@ elif menu == "Consultar":
             st.info("No se encontraron productos.")
     with tabla:
         tabla_productos(docs)
+
 # =====================================================
 # 9. UPDATE: ACTUALIZAR PRODUCTOS Y MÉTRICAS
 # =====================================================
@@ -565,8 +570,6 @@ elif menu == "Actualizar":
                     st.error(str(exc))
                 except PyMongoError:
                     st.error("No se pudo actualizar el registro.")
-
-
 # =====================================================
 # 10. DELETE: ELIMINAR CON CONFIRMACIÓN
 # =====================================================
@@ -594,6 +597,23 @@ elif menu == "Eliminar":
                         st.warning("El producto ya no existe.")
                 except PyMongoError:
                     st.error("No se pudo eliminar el producto.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
