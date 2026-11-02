@@ -93,6 +93,7 @@ PLATAFORMAS = ["TikTok", "Instagram", "Pinterest", "YouTube", "Facebook", "Otras
 CATEGORIAS = ["Maquillaje", "Skincare", "Cabello", "Uñas", "Accesorios", "Otros"]
 ESTADOS = ["En tendencia", "En observación", "Archivada"]
 COLORES = ["#c58d9c", "#e2b3b6", "#e8c7a5", "#a9bdbc", "#a698c2", "#795b76"]
+
 # =====================================================
 # 2. ACCESO Y CONEXIÓN CON MONGODB ATLAS
 # =====================================================
@@ -134,85 +135,6 @@ except PyMongoError:
     st.stop()
 
 
-def obtener_registros(filtro=None):
-    consulta = filtro or {}
-    return list(coleccion.find(consulta).sort("fecha_registro", -1))
-
-
-def url_valida(url):
-    if not url:
-        return False
-    try:
-        parsed = urlparse(url.strip())
-    except ValueError:
-        return False
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
-
-
-def resolver_imagen(doc):
-    imagen_b64 = doc.get("imagen_base64")
-    if imagen_b64:
-        try:
-            pixeles = base64.b64decode(imagen_b64)
-            return Image.open(io.BytesIO(pixeles))
-        except (ValueError, TypeError, OSError, UnidentifiedImageError):
-            pass
-    url = str(doc.get("imagen_url") or "").strip()
-    return url if url and url_valida(url) else None
-
-
-def indice(lista, valor):
-    try:
-        return lista.index(valor) if valor in lista else 0
-    except ValueError:
-        return 0
-
-
-def generar_codigo():
-    ultimo = contadores.find_one_and_update(
-        {"_id": "codigo_tendencia"},
-        {"$inc": {"valor": 1}},
-        upsert=True,
-        return_document=ReturnDocument.AFTER,
-    )
-    numero = int((ultimo or {}).get("valor", 1))
-    return f"BP-{numero:03d}"
-
-
-def comprimir_imagen(archivo):
-    if archivo is None:
-        return None
-    try:
-        archivo.seek(0)
-        imagen = Image.open(archivo)
-        imagen = imagen.convert("RGB")
-        buffer = io.BytesIO()
-        imagen.save(buffer, format="JPEG", quality=80, optimize=True)
-        return base64.b64encode(buffer.getvalue()).decode("utf-8")
-    except (UnidentifiedImageError, ValueError, OSError):
-        raise ValueError("La imagen no es válida o no se pudo procesar.")
-
-
-def estilo_figura(fig, altura, donut=False):
-    fig.update_layout(
-        height=altura,
-        template="plotly_white",
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=20, r=20, t=20, b=20),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    if donut:
-        fig.update_traces(textinfo="percent+label", insidetextorientation="radial")
-    return fig
-
-
-def cambiar_pagina(pagina):
-    # Callback del botón: se ejecuta antes de que Streamlit cree el menú radio.
-    st.session_state["menu"] = pagina
-
-
-def tarjeta_producto(doc):
     """Una sola acción visible: Ver detalles por hover/foco."""
     codigo = str(doc.get("codigo", ""))
     producto = str(doc.get("producto", "Sin nombre"))
@@ -311,6 +233,22 @@ def tabla_productos(documentos):
     filas = [{etiqueta: d.get(clave, "") for clave, etiqueta in columnas.items()} for d in documentos]
     st.dataframe(pd.DataFrame(filas, columns=list(columnas.values())),
                  hide_index=True, use_container_width=True)
+# =====================================================
+# 4. DASHBOARD: CINCO GRÁFICOS + TENDENCIAS COMPACTAS
+# =====================================================
+def estilo_figura(fig, alto=300, es_dona=False):
+    fig.update_layout(
+        height=alto,
+        margin=dict(l=8, r=8, t=10, b=12),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#765862", family="Arial", size=11),
+        legend=dict(orientation="h", x=0, y=-0.17),
+    )
+    if not es_dona:
+        fig.update_yaxes(gridcolor="#f1e1e5")
+    return fig
+
 
 def dashboard_graficos(documentos):
     """Cuadrícula 2x3: 5 gráficos y una lista compacta de tendencias."""
@@ -411,6 +349,7 @@ def dashboard_graficos(documentos):
 
     st.caption("Los gráficos usan los datos guardados en MongoDB Atlas. "
                "Las métricas iniciales son ficticias para la actividad académica.")
+
 # =====================================================
 # 5. MENÚ Y ENCABEZADO
 # =====================================================
@@ -430,6 +369,7 @@ if menu != "Dashboard":
         '<p>Gestión de tendencias beauty · MongoDB Atlas</p></div>',
         unsafe_allow_html=True
     )
+
 # =====================================================
 # 6. DASHBOARD: SOLO GRÁFICOS Y TENDENCIAS COMPACTAS
 # =====================================================
@@ -443,7 +383,19 @@ if menu == "Dashboard":
 elif menu == "Registrar":
     st.header("Registrar nueva tendencia")
     st.info("El código BP-007, BP-008, BP-009... se genera automáticamente.")
-    with st.form("form_registrar", clear_on_submit=True):
+
+    # Fuera del formulario: la imagen se previsualiza en cuanto se adjunta.
+    imagen = st.file_uploader(
+        "📷 Adjuntar fotografía del producto (JPG, PNG o WEBP)",
+        type=["jpg", "jpeg", "png", "webp"],
+        key="foto_nuevo_producto",
+        help="Máximo 5 MB. Si adjuntas una fotografía, no necesitas URL.",
+    )
+    if imagen is not None:
+        st.image(imagen.getvalue(), width=170, caption="Vista previa de la imagen adjunta")
+        st.caption(f"Archivo seleccionado: {imagen.name}")
+
+    with st.form("form_registrar", clear_on_submit=False):
         a, b = st.columns(2)
         with a:
             producto = st.text_input("Nombre del producto")
@@ -455,36 +407,60 @@ elif menu == "Registrar":
             vistas = st.number_input("Visualizaciones", min_value=0, step=1)
             likes = st.number_input("Likes", min_value=0, step=1)
             guardados = st.number_input("Guardados", min_value=0, step=1)
+
         observaciones = st.text_area("Descripción / observaciones")
-        imagen = st.file_uploader("Imagen del producto", type=["jpg", "jpeg", "png", "webp"])
-        url = st.text_input("O URL de imagen (opcional)")
+        url = st.text_input(
+            "O URL pública de imagen (opcional)",
+            help="Deja vacío este campo si adjuntaste una fotografía arriba.",
+        )
         guardar = st.form_submit_button("Guardar producto", type="primary")
 
     if guardar:
         if not producto.strip() or not marca.strip():
             st.warning("Es obligatorio ingresar el producto y la marca.")
-        elif not url_valida(url.strip()):
-            st.warning("La URL de imagen debe comenzar por http:// o https://")
+        elif imagen is None and url.strip() and not url_valida(url.strip()):
+            st.warning("La URL debe comenzar por http:// o https://, o puedes adjuntar una imagen.")
         else:
             try:
                 imagen_b64 = comprimir_imagen(imagen)
-                codigo = generar_codigo()
-                coleccion.insert_one({
-                    "codigo": codigo, "producto": producto.strip(), "marca": marca.strip(),
-                    "categoria": categoria, "plataforma": plataforma, "estado": estado,
-                    "visualizaciones": int(vistas), "likes": int(likes), "guardados": int(guardados),
-                    "observaciones": observaciones.strip(), "imagen_base64": imagen_b64,
+                nuevo = {
+                    "producto": producto.strip(),
+                    "marca": marca.strip(),
+                    "categoria": categoria,
+                    "plataforma": plataforma,
+                    "estado": estado,
+                    "visualizaciones": int(vistas),
+                    "likes": int(likes),
+                    "guardados": int(guardados),
+                    "observaciones": observaciones.strip(),
+                    "imagen_base64": imagen_b64,
                     "imagen_mime": "image/jpeg" if imagen_b64 else None,
-                    "imagen_url": url.strip() if not imagen_b64 else None,
+                    "imagen_url": None if imagen_b64 else (url.strip() or None),
                     "fecha_registro": datetime.now(timezone.utc),
-                })
-                st.success(f"Producto registrado correctamente con código {codigo}.")
+                }
+                codigo = insertar_con_codigo_automatico(nuevo)
+                st.success(f"✅ Producto guardado en MongoDB con código {codigo}.")
+
+                # Confirmación visual del registro que ya fue almacenado.
+                guardado = coleccion.find_one({"codigo": codigo})
+                if guardado and resolver_imagen(guardado) is not None:
+                    st.image(
+                        resolver_imagen(guardado),
+                        width=170,
+                        caption=f"Imagen almacenada para {codigo}",
+                    )
+                else:
+                    st.info("El producto se guardó sin imagen. Puedes agregarla en Actualizar.")
+
             except ValueError as exc:
                 st.error(str(exc))
             except DuplicateKeyError:
-                st.error("El código ya existe. Intenta registrar nuevamente.")
+                st.error("Hay un conflicto con otro índice único de MongoDB. Revisa los índices de la colección.")
+            except RuntimeError as exc:
+                st.error(str(exc))
             except PyMongoError:
                 st.error("No se pudo guardar el producto en MongoDB Atlas.")
+
 # =====================================================
 # 8. READ: CONSULTAR Y FILTRAR
 # =====================================================
@@ -560,8 +536,8 @@ elif menu == "Actualizar":
         if guardar:
             if not producto.strip() or not marca.strip():
                 st.warning("El producto y la marca son obligatorios.")
-            elif not url_valida(url.strip()):
-                st.warning("Introduce una URL http(s) válida.")
+            elif nueva_imagen is None and url.strip() and not url_valida(url.strip()):
+                st.warning("Introduce una URL http(s) válida o adjunta una fotografía.")
             else:
                 try:
                     cambios = {
@@ -589,6 +565,8 @@ elif menu == "Actualizar":
                     st.error(str(exc))
                 except PyMongoError:
                     st.error("No se pudo actualizar el registro.")
+
+
 # =====================================================
 # 10. DELETE: ELIMINAR CON CONFIRMACIÓN
 # =====================================================
@@ -616,3 +594,12 @@ elif menu == "Eliminar":
                         st.warning("El producto ya no existe.")
                 except PyMongoError:
                     st.error("No se pudo eliminar el producto.")
+
+
+
+
+
+
+
+
+
