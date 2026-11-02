@@ -93,6 +93,7 @@ PLATAFORMAS = ["TikTok", "Instagram", "Pinterest", "YouTube", "Facebook", "Otras
 CATEGORIAS = ["Maquillaje", "Skincare", "Cabello", "Uñas", "Accesorios", "Otros"]
 ESTADOS = ["En tendencia", "En observación", "Archivada"]
 COLORES = ["#c58d9c", "#e2b3b6", "#e8c7a5", "#a9bdbc", "#a698c2", "#795b76"]
+
 # =====================================================
 # 2. ACCESO Y CONEXIÓN CON MONGODB ATLAS
 # =====================================================
@@ -132,6 +133,63 @@ try:
 except PyMongoError:
     st.error("No se pudo conectar con MongoDB Atlas. Revisa la URI, permisos y acceso de red.")
     st.stop()
+
+# =====================================================
+# 3. FUNCIONES COMPARTIDAS
+# =====================================================
+def obtener_registros(filtro=None):
+    return list(coleccion.find(filtro or {}).sort("codigo", 1))
+
+
+def indice(opciones, valor):
+    return opciones.index(valor) if valor in opciones else 0
+
+
+def generar_codigo():
+    """Reserva el siguiente correlativo sin reutilizar codigos eliminados."""
+    maximo = 0
+    for registro in coleccion.find({}, {"codigo": 1, "_id": 0}):
+        match = re.fullmatch(r"BP-(\d+)", str(registro.get("codigo", "")))
+        if match:
+            maximo = max(maximo, int(match.group(1)))
+
+    # Si se insertaron codigos manualmente, sincronizar el contador.
+    contadores.update_one(
+        {"_id": "tendencias"},
+        {"$max": {"ultimo": maximo}},
+        upsert=True,
+    )
+    resultado = contadores.find_one_and_update(
+        {"_id": "tendencias"},
+        {"$inc": {"ultimo": 1}},
+        return_document=ReturnDocument.AFTER,
+    )
+    return f"BP-{resultado['ultimo']:03d}"
+
+
+def insertar_con_codigo_automatico(datos, intentos=8):
+    """Reservar codigo y reintentar solo si otro registro tomo ese codigo."""
+    for _ in range(intentos):
+        codigo = generar_codigo()
+        try:
+            coleccion.insert_one({"codigo": codigo, **datos})
+            return codigo
+        except DuplicateKeyError as exc:
+            # No ocultar problemas de otros indices unicos.
+            patron = (exc.details or {}).get("keyPattern") or {}
+            if "codigo" not in patron and "codigo_1" not in str(exc):
+                raise
+    raise RuntimeError("No fue posible reservar un codigo unico tras varios intentos.")
+
+
+def url_valida(url):
+    if not url:
+        return True
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+
+
+def comprimir_imagen(archivo):
     if archivo is None:
         return None
     if archivo.size > 5 * 1024 * 1024:
@@ -262,6 +320,36 @@ def tabla_productos(documentos):
     filas = [{etiqueta: d.get(clave, "") for clave, etiqueta in columnas.items()} for d in documentos]
     st.dataframe(pd.DataFrame(filas, columns=list(columnas.values())),
                  hide_index=True, use_container_width=True)
+
+
+# =====================================================
+# 4. DASHBOARD: CINCO GRÁFICOS + TENDENCIAS COMPACTAS
+# =====================================================
+def estilo_figura(fig, alto=300, es_dona=False):
+    fig.update_layout(
+        height=alto,
+        margin=dict(l=8, r=8, t=10, b=12),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#765862", family="Arial", size=11),
+        legend=dict(orientation="h", x=0, y=-0.17),
+    )
+    if not es_dona:
+        fig.update_yaxes(gridcolor="#f1e1e5")
+    return fig
+
+
+def dashboard_graficos(documentos):
+    """Cuadrícula 2x3: 5 gráficos y una lista compacta de tendencias."""
+    if not documentos:
+        st.info("Registra productos para visualizar gráficos y tendencias.")
+        return
+
+    df = pd.DataFrame([{
+        "codigo": str(d.get("codigo") or ""),
+        "producto": str(d.get("producto") or "Sin nombre"),
+        "plataforma": str(d.get("plataforma") or "Otras"),
+        "categoria": str(d.get("categoria") or "Otros"),
         "estado": str(d.get("estado") or "Sin estado"),
         "visualizaciones": int(d.get("visualizaciones") or 0),
         "likes": int(d.get("likes") or 0),
@@ -350,6 +438,7 @@ def tabla_productos(documentos):
 
     st.caption("Los gráficos usan los datos guardados en MongoDB Atlas. "
                "Las métricas iniciales son ficticias para la actividad académica.")
+
 
 # =====================================================
 # 5. MENÚ Y ENCABEZADO
@@ -568,6 +657,7 @@ elif menu == "Actualizar":
                     st.error(str(exc))
                 except PyMongoError:
                     st.error("No se pudo actualizar el registro.")
+
 # =====================================================
 # 10. DELETE: ELIMINAR CON CONFIRMACIÓN
 # =====================================================
@@ -595,23 +685,3 @@ elif menu == "Eliminar":
                         st.warning("El producto ya no existe.")
                 except PyMongoError:
                     st.error("No se pudo eliminar el producto.")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
