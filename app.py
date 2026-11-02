@@ -132,8 +132,6 @@ try:
 except PyMongoError:
     st.error("No se pudo conectar con MongoDB Atlas. Revisa la URI, permisos y acceso de red.")
     st.stop()
-
-
     if archivo is None:
         return None
     if archivo.size > 5 * 1024 * 1024:
@@ -381,7 +379,6 @@ if menu == "Dashboard":
     docs = obtener_registros()
     dashboard_graficos(docs)
 
-
 # =====================================================
 # 7. CREATE: REGISTRAR CON CÓDIGO AUTOMÁTICO
 # =====================================================
@@ -465,6 +462,7 @@ elif menu == "Registrar":
                 st.error(str(exc))
             except PyMongoError:
                 st.error("No se pudo guardar el producto en MongoDB Atlas.")
+
 # =====================================================
 # 8. READ: CONSULTAR Y FILTRAR
 # =====================================================
@@ -597,12 +595,6 @@ elif menu == "Eliminar":
                         st.warning("El producto ya no existe.")
                 except PyMongoError:
                     st.error("No se pudo eliminar el producto.")
-
-
-
-
-
-
 
 
 
