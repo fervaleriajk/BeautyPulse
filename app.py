@@ -339,6 +339,36 @@ def estilo_figura(fig, alto=300, es_dona=False):
     return fig
 
 
+def ordenar_tendencias_activas(documentos, criterio="Popularidad (vistas + likes)"):
+    """Ordena usando métricas actuales de MongoDB, nunca el orden de inserción."""
+    activos = [
+        doc for doc in documentos
+        if str(doc.get("estado") or "").strip().casefold() != "archivada"
+    ]
+
+    def cantidad(doc, campo):
+        try:
+            return int(doc.get(campo) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def ordenar(doc):
+        vistas = cantidad(doc, "visualizaciones")
+        likes = cantidad(doc, "likes")
+        codigo = str(doc.get("codigo") or "")
+
+        if criterio == "Más visualizaciones":
+            return (-vistas, -likes, codigo)
+        if criterio == "Más likes":
+            return (-likes, -vistas, codigo)
+
+        # Popularidad demostrativa: alcance + likes. No representa
+        # un indicador histórico ni engagement real de la plataforma.
+        return (-(vistas + likes), -likes, -vistas, codigo)
+
+    return sorted(activos, key=ordenar)
+
+
 def dashboard_graficos(documentos):
     """Cuadrícula 2x3: 5 gráficos y una lista compacta de tendencias."""
     if not documentos:
@@ -373,8 +403,15 @@ def dashboard_graficos(documentos):
     with der:
         with st.container(border=True):
             st.markdown("**💄 Tendencias de Belleza Activas**")
-            activos = [d for d in documentos if d.get("estado") != "Archivada"]
-            with st.container(height=313, border=False):
+            criterio = st.selectbox(
+                "Ordenar tendencias por",
+                ["Popularidad (vistas + likes)", "Más visualizaciones", "Más likes"],
+                key="criterio_orden_tendencias",
+            )
+            # La lista se vuelve a calcular con los datos obtenidos
+            # de MongoDB cada vez que Streamlit ejecuta el Dashboard.
+            activos = ordenar_tendencias_activas(documentos, criterio)
+            with st.container(height=277, border=False):
                 if not activos:
                     st.info("No hay tendencias activas.")
                 for doc in activos:
